@@ -446,13 +446,16 @@ func extractValidateConstraints(fd protoreflect.FieldDescriptor) map[string]any 
 	return constraints
 }
 
-func (g *FileGenerator) messageSchema(md protoreflect.MessageDescriptor) map[string]any {
+func (g *FileGenerator) messageSchema(md protoreflect.MessageDescriptor, visited map[string]struct{}) map[string]any {
 	required := []string{}
 	// Fields that are not oneOf
 	normalFields := map[string]any{}
 	// One entry per oneOf block in the message.
 	oneOf := map[string][]map[string]any{}
-
+	if _, ok := visited[string(md.FullName())]; ok {
+		return map[string]any{"type": "object"}
+	}
+	visited[string(md.FullName())] = struct{}{}
 	// Process all fields in the message descriptor
 	for i := 0; i < md.Fields().Len(); i++ {
 		nestedFd := md.Fields().Get(i)
@@ -466,13 +469,13 @@ func (g *FileGenerator) messageSchema(md protoreflect.MessageDescriptor) map[str
 				}
 				oneOf[string(oneof.Name())] = append(oneOf[string(oneof.Name())], map[string]any{
 					"properties": map[string]any{
-						name: g.getType(nestedFd),
+						name: g.getType(nestedFd, visited),
 					},
 					"required": []string{name},
 				})
 			} else {
 				// OpenAI compatibility mode. Oneof, Anyof are not supported, therefore just use ordinary fields, BUT add extra comments.
-				schema := g.getType(nestedFd)
+				schema := g.getType(nestedFd, visited)
 
 				// Replace type with a union of the actual type and null.
 				// This is the suggested way to work around OpenAI's requirement to make all fields
@@ -492,7 +495,7 @@ func (g *FileGenerator) messageSchema(md protoreflect.MessageDescriptor) map[str
 			}
 		} else {
 			// If not part of a oneof, handle as a normal field
-			normalFields[name] = g.getType(nestedFd)
+			normalFields[name] = g.getType(nestedFd, visited)
 			if isFieldRequired(nestedFd) || g.openAICompat { // In OpenAI, everything is required.
 				required = append(required, name)
 			}
@@ -535,7 +538,7 @@ func (g *FileGenerator) messageSchema(md protoreflect.MessageDescriptor) map[str
 	return result
 }
 
-func (g *FileGenerator) getType(fd protoreflect.FieldDescriptor) map[string]any {
+func (g *FileGenerator) getType(fd protoreflect.FieldDescriptor, visited map[string]struct{}) map[string]any {
 	if fd.IsMap() {
 		keyType := fd.MapKey().Kind()
 		keyConstraints := map[string]any{"type": "string"}
@@ -558,7 +561,7 @@ func (g *FileGenerator) getType(fd protoreflect.FieldDescriptor) map[string]any 
 					"properties": map[string]any{
 						"key": map[string]any{"type": "string"},
 						"value": map[string]any{
-							"type": g.getType(fd.MapValue())["type"],
+							"type": g.getType(fd.MapValue(), visited)["type"],
 						},
 					},
 					"required":             []string{"key", "value"},
@@ -570,7 +573,7 @@ func (g *FileGenerator) getType(fd protoreflect.FieldDescriptor) map[string]any 
 		return map[string]any{
 			"type":                 "object",
 			"propertyNames":        keyConstraints,
-			"additionalProperties": g.getType(fd.MapValue()),
+			"additionalProperties": g.getType(fd.MapValue(), visited),
 		}
 	}
 
@@ -662,7 +665,7 @@ func (g *FileGenerator) getType(fd protoreflect.FieldDescriptor) map[string]any 
 				schema = map[string]any{"type": "string", "format": "byte", "nullable": true}
 			}
 		default:
-			schema = g.messageSchema(fd.Message())
+			schema = g.messageSchema(fd.Message(), visited)
 		}
 
 	case protoreflect.EnumKind:
@@ -804,7 +807,7 @@ func (g *FileGenerator) Generate(packageSuffix string) {
 
 			// Generate standard schema
 			g.openAICompat = false
-			standardSchema := g.messageSchema(meth.Input.Desc)
+			standardSchema := g.messageSchema(meth.Input.Desc, make(map[string]struct{}))
 			marshaledStandard, err := json.Marshal(standardSchema)
 			if err != nil {
 				panic(err)
@@ -819,7 +822,7 @@ func (g *FileGenerator) Generate(packageSuffix string) {
 
 			// Generate OpenAI schema
 			g.openAICompat = true
-			openAISchema := g.messageSchema(meth.Input.Desc)
+			openAISchema := g.messageSchema(meth.Input.Desc, make(map[string]struct{}))
 			// In OpenAI mode, we use type ["my-type", "null"] to make it nullable, but many tools don't like this for the top-level schema object.
 			openAISchema["type"] = "object"
 			marshaledOpenAI, err := json.Marshal(openAISchema)
