@@ -59,6 +59,7 @@ package {{ .GoPackage }}
 
 import (
   "context"
+  "io"
   "github.com/mark3labs/mcp-go/mcp"
   mcpserver "github.com/mark3labs/mcp-go/server"
   "encoding/json"
@@ -80,9 +81,15 @@ var (
 
 {{- range $serviceName, $methods := .Services }}
 // {{$serviceName}}Server is compatible with the grpc-go server interface.
+// For server-streaming methods, the signature returns a slice for MCP compatibility.
 type {{$serviceName}}Server interface {
   {{- range $methodName, $tool := $methods }}
+  {{- if eq $tool.StreamType 1 }}
+  // {{$methodName}} is a server-streaming method. Returns all responses as a slice.
+  {{$methodName}}(ctx context.Context, req *{{$tool.RequestType}}) ([]*{{$tool.ResponseType}}, error)
+  {{- else }}
   {{$methodName}}(ctx context.Context, req *{{$tool.RequestType}}) (*{{$tool.ResponseType}}, error)
+  {{- end }}
   {{- end }}
 }
 {{ end }}
@@ -101,7 +108,7 @@ func Register{{$key}}Handler(s *mcpserver.MCPServer, srv {{$key}}Server, opts ..
   if len(config.ExtraProperties) > 0 {
     {{$tool_name}}Tool = runtime.AddExtraPropertiesToTool({{$tool_name}}Tool, config.ExtraProperties)
   }
-  
+
   s.AddTool({{$tool_name}}Tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
     var req {{$tool_val.RequestType}}
 
@@ -123,6 +130,26 @@ func Register{{$key}}Handler(s *mcpserver.MCPServer, srv {{$key}}Server, opts ..
       return nil, err
     }
 
+    {{- if eq $tool_val.StreamType 1 }}
+    // Server streaming: collect all responses into an array
+    responses, err := srv.{{$tool_name}}(ctx, &req)
+    if err != nil {
+      return runtime.HandleError(err)
+    }
+
+    var results []json.RawMessage
+    for _, resp := range responses {
+      m, err := (protojson.MarshalOptions{UseProtoNames: true, EmitDefaultValues: true}).Marshal(resp)
+      if err != nil {
+        return nil, err
+      }
+      results = append(results, m)
+    }
+    marshaled, err = json.Marshal(results)
+    if err != nil {
+      return nil, err
+    }
+    {{- else }}
     resp, err := srv.{{$tool_name}}(ctx, &req)
     if err != nil {
       return runtime.HandleError(err)
@@ -132,6 +159,7 @@ func Register{{$key}}Handler(s *mcpserver.MCPServer, srv {{$key}}Server, opts ..
     if err != nil {
       return nil, err
     }
+    {{- end }}
 
     return mcp.NewToolResultText(string(marshaled)), nil
   })
@@ -151,7 +179,7 @@ func Register{{$key}}HandlerOpenAI(s *mcpserver.MCPServer, srv {{$key}}Server, o
   if len(config.ExtraProperties) > 0 {
     {{$tool_name}}ToolOpenAI = runtime.AddExtraPropertiesToTool({{$tool_name}}ToolOpenAI, config.ExtraProperties)
   }
-  
+
   s.AddTool({{$tool_name}}ToolOpenAI, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
     var req {{$tool_val.RequestType}}
 
@@ -175,6 +203,26 @@ func Register{{$key}}HandlerOpenAI(s *mcpserver.MCPServer, srv {{$key}}Server, o
       return nil, err
     }
 
+    {{- if eq $tool_val.StreamType 1 }}
+    // Server streaming: collect all responses into an array
+    responses, err := srv.{{$tool_name}}(ctx, &req)
+    if err != nil {
+      return runtime.HandleError(err)
+    }
+
+    var results []json.RawMessage
+    for _, resp := range responses {
+      m, err := (protojson.MarshalOptions{UseProtoNames: true, EmitDefaultValues: true}).Marshal(resp)
+      if err != nil {
+        return nil, err
+      }
+      results = append(results, m)
+    }
+    marshaled, err = json.Marshal(results)
+    if err != nil {
+      return nil, err
+    }
+    {{- else }}
     resp, err := srv.{{$tool_name}}(ctx, &req)
     if err != nil {
       return runtime.HandleError(err)
@@ -184,6 +232,7 @@ func Register{{$key}}HandlerOpenAI(s *mcpserver.MCPServer, srv {{$key}}Server, o
     if err != nil {
       return nil, err
     }
+    {{- end }}
 
     return mcp.NewToolResultText(string(marshaled)), nil
   })
@@ -207,9 +256,23 @@ func Register{{$key}}HandlerWithProvider(s *mcpserver.MCPServer, srv {{$key}}Ser
 // {{$serviceName}}Client is compatible with the grpc-go client interface.
 type {{$serviceName}}Client interface {
   {{- range $methodName, $tool := $methods }}
+  {{- if eq $tool.StreamType 1 }}
+  {{$methodName}}(ctx context.Context, req *{{$tool.RequestType}}, opts ...grpc.CallOption) ({{$serviceName}}_{{$methodName}}Client, error)
+  {{- else }}
   {{$methodName}}(ctx context.Context, req *{{$tool.RequestType}}, opts ...grpc.CallOption) (*{{$tool.ResponseType}}, error)
   {{- end }}
+  {{- end }}
 }
+
+{{- range $methodName, $tool := $methods }}
+{{- if eq $tool.StreamType 1 }}
+// {{$serviceName}}_{{$methodName}}Client is the client streaming interface for {{$methodName}}.
+type {{$serviceName}}_{{$methodName}}Client interface {
+  Recv() (*{{$tool.ResponseType}}, error)
+  grpc.ClientStream
+}
+{{- end }}
+{{- end }}
 {{ end }}
 
 
@@ -217,7 +280,11 @@ type {{$serviceName}}Client interface {
 // Connect{{$serviceName}}Client is compatible with the connectrpc-go client interface.
 type Connect{{$serviceName}}Client interface {
   {{- range $methodName, $tool := $methods }}
+  {{- if eq $tool.StreamType 1 }}
+  {{$methodName}}(ctx context.Context, req *connect.Request[{{$tool.RequestType}}]) (*connect.ServerStreamForClient[{{$tool.ResponseType}}], error)
+  {{- else }}
   {{$methodName}}(ctx context.Context, req *connect.Request[{{$tool.RequestType}}]) (*connect.Response[{{$tool.ResponseType}}], error)
+  {{- end }}
   {{- end }}
 }
 {{ end }}
@@ -236,7 +303,7 @@ func ForwardToConnect{{$key}}Client(s *mcpserver.MCPServer, client Connect{{$key
   if len(config.ExtraProperties) > 0 {
     {{$tool_name}}Tool = runtime.AddExtraPropertiesToTool({{$tool_name}}Tool, config.ExtraProperties)
   }
-  
+
   s.AddTool({{$tool_name}}Tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
     var req {{$tool_val.RequestType}}
 
@@ -258,6 +325,29 @@ func ForwardToConnect{{$key}}Client(s *mcpserver.MCPServer, client Connect{{$key
       return nil, err
     }
 
+    {{- if eq $tool_val.StreamType 1 }}
+    // Server streaming: collect all responses into an array
+    stream, err := client.{{$tool_name}}(ctx, connect.NewRequest(&req))
+    if err != nil {
+      return runtime.HandleError(err)
+    }
+
+    var results []json.RawMessage
+    for stream.Receive() {
+      m, err := (protojson.MarshalOptions{UseProtoNames: true, EmitDefaultValues: true}).Marshal(stream.Msg())
+      if err != nil {
+        return nil, err
+      }
+      results = append(results, m)
+    }
+    if err := stream.Err(); err != nil {
+      return runtime.HandleError(err)
+    }
+    marshaled, err = json.Marshal(results)
+    if err != nil {
+      return nil, err
+    }
+    {{- else }}
     resp, err := client.{{$tool_name}}(ctx, connect.NewRequest(&req))
     if err != nil {
       return runtime.HandleError(err)
@@ -267,6 +357,7 @@ func ForwardToConnect{{$key}}Client(s *mcpserver.MCPServer, client Connect{{$key
     if err != nil {
       return nil, err
     }
+    {{- end }}
     return mcp.NewToolResultText(string(marshaled)), nil
   })
   {{- end }}
@@ -287,7 +378,7 @@ func ForwardTo{{$key}}Client(s *mcpserver.MCPServer, client {{$key}}Client, opts
   if len(config.ExtraProperties) > 0 {
     {{$tool_name}}Tool = runtime.AddExtraPropertiesToTool({{$tool_name}}Tool, config.ExtraProperties)
   }
-  
+
   s.AddTool({{$tool_name}}Tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
     var req {{$tool_val.RequestType}}
 
@@ -309,6 +400,33 @@ func ForwardTo{{$key}}Client(s *mcpserver.MCPServer, client {{$key}}Client, opts
       return nil, err
     }
 
+    {{- if eq $tool_val.StreamType 1 }}
+    // Server streaming: collect all responses into an array
+    stream, err := client.{{$tool_name}}(ctx, &req)
+    if err != nil {
+      return runtime.HandleError(err)
+    }
+
+    var results []json.RawMessage
+    for {
+      resp, err := stream.Recv()
+      if err == io.EOF {
+        break
+      }
+      if err != nil {
+        return runtime.HandleError(err)
+      }
+      m, err := (protojson.MarshalOptions{UseProtoNames: true, EmitDefaultValues: true}).Marshal(resp)
+      if err != nil {
+        return nil, err
+      }
+      results = append(results, m)
+    }
+    marshaled, err = json.Marshal(results)
+    if err != nil {
+      return nil, err
+    }
+    {{- else }}
     resp, err := client.{{$tool_name}}(ctx, &req)
     if err != nil {
       return runtime.HandleError(err)
@@ -318,6 +436,7 @@ func ForwardTo{{$key}}Client(s *mcpserver.MCPServer, client {{$key}}Client, opts
     if err != nil {
       return nil, err
     }
+    {{- end }}
     return mcp.NewToolResultText(string(marshaled)), nil
   })
   {{- end }}
@@ -336,11 +455,21 @@ type TplParams struct {
 	Services    map[string]map[string]Tool
 }
 
+type StreamType int
+
+const (
+	StreamTypeUnary         StreamType = iota
+	StreamTypeServerStream             // Server sends multiple responses
+	StreamTypeClientStream             // Client sends multiple requests (not supported in MCP)
+	StreamTypeBidiStream               // Both directions (not supported in MCP)
+)
+
 type Tool struct {
 	RequestType   string
 	ResponseType  string
 	MCPTool       mcp.Tool
 	MCPToolOpenAI mcp.Tool
+	StreamType    StreamType
 }
 
 func kindToType(kind protoreflect.Kind) string {
@@ -794,9 +923,19 @@ func (g *FileGenerator) Generate(packageSuffix string) {
 	for _, svc := range g.f.Services {
 		s := map[string]Tool{}
 		for _, meth := range svc.Methods {
-			// Only unary supported at the moment
-			if meth.Desc.IsStreamingClient() || meth.Desc.IsStreamingServer() {
+			// Determine stream type
+			var streamType StreamType
+			if meth.Desc.IsStreamingClient() && meth.Desc.IsStreamingServer() {
+				// Bidirectional streaming is not supported in MCP
 				continue
+			} else if meth.Desc.IsStreamingClient() {
+				// Client streaming is not supported in MCP (single request/response model)
+				continue
+			} else if meth.Desc.IsStreamingServer() {
+				// Server streaming: collect all responses into an array
+				streamType = StreamTypeServerStream
+			} else {
+				streamType = StreamTypeUnary
 			}
 
 			// Generate standard tool
@@ -836,13 +975,16 @@ func (g *FileGenerator) Generate(packageSuffix string) {
 				ResponseType:  g.gf.QualifiedGoIdent(meth.Output.GoIdent),
 				MCPTool:       toolStandard,
 				MCPToolOpenAI: toolOpenAI,
+				StreamType:    streamType,
 			}
 			tools[svc.GoName+"_"+meth.GoName] = toolStandard
 			toolsOpenAI[svc.GoName+"_"+meth.GoName] = toolOpenAI
 		}
 		services[string(svc.Desc.Name())] = s
 	}
-
+	if len(services) == 0 || len(tools) == 0 {
+		return
+	}
 	params := TplParams{
 		PackageName: string(g.f.Desc.Package()),
 		SourcePath:  g.f.Desc.Path(),
