@@ -15,9 +15,11 @@
 package generator
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"encoding/json"
 	"fmt"
+	"go/format"
 	"go/token"
 	"math/big"
 	"path"
@@ -458,10 +460,10 @@ type TplParams struct {
 type StreamType int
 
 const (
-	StreamTypeUnary         StreamType = iota
-	StreamTypeServerStream             // Server sends multiple responses
-	StreamTypeClientStream             // Client sends multiple requests (not supported in MCP)
-	StreamTypeBidiStream               // Both directions (not supported in MCP)
+	StreamTypeUnary        StreamType = iota
+	StreamTypeServerStream            // Server sends multiple responses
+	StreamTypeClientStream            // Client sends multiple requests (not supported in MCP)
+	StreamTypeBidiStream              // Both directions (not supported in MCP)
 )
 
 type Tool struct {
@@ -993,8 +995,15 @@ func (g *FileGenerator) Generate(packageSuffix string) {
 		Tools:       tools,
 		ToolsOpenAI: toolsOpenAI,
 	}
-	err = tpl.Execute(g.gf, params)
+	var buf bytes.Buffer
+	err = tpl.Execute(&buf, params)
 	if err != nil {
 		g.gen.Error(err)
 	}
+	p, err := format.Source(buf.Bytes())
+	if err != nil {
+		g.gen.Error(err)
+		return
+	}
+	g.gf.Write(p)
 }
