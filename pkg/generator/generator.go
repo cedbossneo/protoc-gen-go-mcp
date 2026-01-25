@@ -85,20 +85,45 @@ var (
 
 {{- range $serviceName, $methods := .Services }}
 // {{$serviceName}}Server is compatible with the grpc-go server interface.
-// Note: Server-streaming methods are not included here as they have incompatible signatures.
-// Use ForwardTo{{$serviceName}}Client instead to support streaming methods.
 type {{$serviceName}}Server interface {
   {{- range $methodName, $tool := $methods }}
-  {{- if eq $tool.StreamType 0 }}
+  {{- if eq $tool.StreamType 1 }}
+  {{$methodName}}(req *{{$tool.RequestType}}, stream {{$serviceName}}_{{$methodName}}Server) error
+  {{- else }}
   {{$methodName}}(ctx context.Context, req *{{$tool.RequestType}}) (*{{$tool.ResponseType}}, error)
   {{- end }}
   {{- end }}
 }
+
+{{- range $methodName, $tool := $methods }}
+{{- if eq $tool.StreamType 1 }}
+// {{$serviceName}}_{{$methodName}}Server is the server streaming interface for {{$methodName}}.
+type {{$serviceName}}_{{$methodName}}Server interface {
+  Send(*{{$tool.ResponseType}}) error
+  grpc.ServerStream
+}
+
+// {{$serviceName}}_{{$methodName}}ServerCollector collects streamed responses for MCP.
+type {{$serviceName}}_{{$methodName}}ServerCollector struct {
+  grpc.ServerStream
+  ctx       context.Context
+  responses []*{{$tool.ResponseType}}
+}
+
+func (c *{{$serviceName}}_{{$methodName}}ServerCollector) Send(resp *{{$tool.ResponseType}}) error {
+  c.responses = append(c.responses, resp)
+  return nil
+}
+
+func (c *{{$serviceName}}_{{$methodName}}ServerCollector) Context() context.Context {
+  return c.ctx
+}
+{{- end }}
+{{- end }}
 {{ end }}
 
 {{- range $key, $val := .Services }}
 // Register{{$key}}Handler registers standard MCP handlers for {{$key}}
-// Note: Only unary methods are supported. Use ForwardTo{{$key}}Client for streaming methods.
 func Register{{$key}}Handler(s *mcpserver.MCPServer, srv {{$key}}Server, opts ...runtime.Option) {
   config := runtime.NewConfig()
   for _, opt := range opts {
@@ -106,7 +131,6 @@ func Register{{$key}}Handler(s *mcpserver.MCPServer, srv {{$key}}Server, opts ..
   }
 
   {{- range $tool_name, $tool_val := $val }}
-  {{- if eq $tool_val.StreamType 0 }}
   {{$tool_name}}Tool := {{$key}}_{{$tool_name}}Tool
   // Add extra properties to schema if configured
   if len(config.ExtraProperties) > 0 {
@@ -134,6 +158,26 @@ func Register{{$key}}Handler(s *mcpserver.MCPServer, srv {{$key}}Server, opts ..
       return nil, err
     }
 
+    {{- if eq $tool_val.StreamType 1 }}
+    // Server streaming: use collector to gather all responses
+    collector := &{{$key}}_{{$tool_name}}ServerCollector{ctx: ctx}
+    if err := srv.{{$tool_name}}(&req, collector); err != nil {
+      return runtime.HandleError(err)
+    }
+
+    var results []json.RawMessage
+    for _, resp := range collector.responses {
+      m, err := (protojson.MarshalOptions{UseProtoNames: true, EmitDefaultValues: true}).Marshal(resp)
+      if err != nil {
+        return nil, err
+      }
+      results = append(results, m)
+    }
+    marshaled, err = json.Marshal(results)
+    if err != nil {
+      return nil, err
+    }
+    {{- else }}
     resp, err := srv.{{$tool_name}}(ctx, &req)
     if err != nil {
       return runtime.HandleError(err)
@@ -143,15 +187,14 @@ func Register{{$key}}Handler(s *mcpserver.MCPServer, srv {{$key}}Server, opts ..
     if err != nil {
       return nil, err
     }
+    {{- end }}
 
     return mcp.NewToolResultText(string(marshaled)), nil
   })
   {{- end }}
-  {{- end }}
 }
 
 // Register{{$key}}HandlerOpenAI registers OpenAI-compatible MCP handlers for {{$key}}
-// Note: Only unary methods are supported. Use ForwardTo{{$key}}Client for streaming methods.
 func Register{{$key}}HandlerOpenAI(s *mcpserver.MCPServer, srv {{$key}}Server, opts ...runtime.Option) {
   config := runtime.NewConfig()
   for _, opt := range opts {
@@ -159,7 +202,6 @@ func Register{{$key}}HandlerOpenAI(s *mcpserver.MCPServer, srv {{$key}}Server, o
   }
 
   {{- range $tool_name, $tool_val := $val }}
-  {{- if eq $tool_val.StreamType 0 }}
   {{$tool_name}}ToolOpenAI := {{$key}}_{{$tool_name}}ToolOpenAI
   // Add extra properties to schema if configured
   if len(config.ExtraProperties) > 0 {
@@ -189,6 +231,26 @@ func Register{{$key}}HandlerOpenAI(s *mcpserver.MCPServer, srv {{$key}}Server, o
       return nil, err
     }
 
+    {{- if eq $tool_val.StreamType 1 }}
+    // Server streaming: use collector to gather all responses
+    collector := &{{$key}}_{{$tool_name}}ServerCollector{ctx: ctx}
+    if err := srv.{{$tool_name}}(&req, collector); err != nil {
+      return runtime.HandleError(err)
+    }
+
+    var results []json.RawMessage
+    for _, resp := range collector.responses {
+      m, err := (protojson.MarshalOptions{UseProtoNames: true, EmitDefaultValues: true}).Marshal(resp)
+      if err != nil {
+        return nil, err
+      }
+      results = append(results, m)
+    }
+    marshaled, err = json.Marshal(results)
+    if err != nil {
+      return nil, err
+    }
+    {{- else }}
     resp, err := srv.{{$tool_name}}(ctx, &req)
     if err != nil {
       return runtime.HandleError(err)
@@ -198,10 +260,10 @@ func Register{{$key}}HandlerOpenAI(s *mcpserver.MCPServer, srv {{$key}}Server, o
     if err != nil {
       return nil, err
     }
+    {{- end }}
 
     return mcp.NewToolResultText(string(marshaled)), nil
   })
-  {{- end }}
   {{- end }}
 }
 
