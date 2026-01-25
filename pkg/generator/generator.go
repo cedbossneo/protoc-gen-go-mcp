@@ -61,7 +61,9 @@ package {{ .GoPackage }}
 
 import (
   "context"
+  {{- if .HasServerStreaming }}
   "io"
+  {{- end }}
   "github.com/mark3labs/mcp-go/mcp"
   mcpserver "github.com/mark3labs/mcp-go/server"
   "encoding/json"
@@ -449,12 +451,13 @@ func ForwardTo{{$key}}Client(s *mcpserver.MCPServer, client {{$key}}Client, opts
 `
 
 type TplParams struct {
-	PackageName string
-	SourcePath  string
-	GoPackage   string
-	Tools       map[string]mcp.Tool
-	ToolsOpenAI map[string]mcp.Tool
-	Services    map[string]map[string]Tool
+	PackageName        string
+	SourcePath         string
+	GoPackage          string
+	Tools              map[string]mcp.Tool
+	ToolsOpenAI        map[string]mcp.Tool
+	Services           map[string]map[string]Tool
+	HasServerStreaming bool // True if any method uses server streaming (needed for io import)
 }
 
 type StreamType int
@@ -921,6 +924,7 @@ func (g *FileGenerator) Generate(packageSuffix string) {
 	services := map[string]map[string]Tool{}
 	tools := map[string]mcp.Tool{}
 	toolsOpenAI := map[string]mcp.Tool{}
+	hasServerStreaming := false
 
 	for _, svc := range g.f.Services {
 		s := map[string]Tool{}
@@ -936,6 +940,7 @@ func (g *FileGenerator) Generate(packageSuffix string) {
 			} else if meth.Desc.IsStreamingServer() {
 				// Server streaming: collect all responses into an array
 				streamType = StreamTypeServerStream
+				hasServerStreaming = true
 			} else {
 				streamType = StreamTypeUnary
 			}
@@ -982,18 +987,22 @@ func (g *FileGenerator) Generate(packageSuffix string) {
 			tools[svc.GoName+"_"+meth.GoName] = toolStandard
 			toolsOpenAI[svc.GoName+"_"+meth.GoName] = toolOpenAI
 		}
-		services[string(svc.Desc.Name())] = s
+		// Only add services that have at least one method
+		if len(s) > 0 {
+			services[string(svc.Desc.Name())] = s
+		}
 	}
 	if len(services) == 0 || len(tools) == 0 {
 		return
 	}
 	params := TplParams{
-		PackageName: string(g.f.Desc.Package()),
-		SourcePath:  g.f.Desc.Path(),
-		GoPackage:   string(g.f.GoPackageName),
-		Services:    services,
-		Tools:       tools,
-		ToolsOpenAI: toolsOpenAI,
+		PackageName:        string(g.f.Desc.Package()),
+		SourcePath:         g.f.Desc.Path(),
+		GoPackage:          string(g.f.GoPackageName),
+		Services:           services,
+		Tools:              tools,
+		ToolsOpenAI:        toolsOpenAI,
+		HasServerStreaming: hasServerStreaming,
 	}
 	var buf bytes.Buffer
 	err = tpl.Execute(&buf, params)
