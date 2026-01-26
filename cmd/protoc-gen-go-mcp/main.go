@@ -16,7 +16,7 @@ package main
 import (
 	"flag"
 
-	"github.com/redpanda-data/protoc-gen-go-mcp/pkg/generator"
+	"github.com/cedbossneo/protoc-gen-go-mcp/pkg/generator"
 	"google.golang.org/protobuf/compiler/protogen"
 )
 
@@ -24,7 +24,7 @@ func main() {
 	var flagSet flag.FlagSet
 	packageSuffix := flagSet.String(
 		"package_suffix",
-		"mcp",
+		"",
 		"Generate files into a sub-package of the package containing the base .pb.go files using the given suffix. An empty suffix denotes to generate into the same package as the base pb.go files.",
 	)
 

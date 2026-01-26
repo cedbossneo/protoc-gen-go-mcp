@@ -83,45 +83,6 @@ var (
 {{- end }}
 )
 
-{{- range $serviceName, $methods := .Services }}
-// {{$serviceName}}Server is compatible with the grpc-go server interface.
-type {{$serviceName}}Server interface {
-  {{- range $methodName, $tool := $methods }}
-  {{- if eq $tool.StreamType 1 }}
-  {{$methodName}}(req *{{$tool.RequestType}}, stream {{$serviceName}}_{{$methodName}}Server) error
-  {{- else }}
-  {{$methodName}}(ctx context.Context, req *{{$tool.RequestType}}) (*{{$tool.ResponseType}}, error)
-  {{- end }}
-  {{- end }}
-}
-
-{{- range $methodName, $tool := $methods }}
-{{- if eq $tool.StreamType 1 }}
-// {{$serviceName}}_{{$methodName}}Server is the server streaming interface for {{$methodName}}.
-type {{$serviceName}}_{{$methodName}}Server interface {
-  Send(*{{$tool.ResponseType}}) error
-  grpc.ServerStream
-}
-
-// {{$serviceName}}_{{$methodName}}ServerCollector collects streamed responses for MCP.
-type {{$serviceName}}_{{$methodName}}ServerCollector struct {
-  grpc.ServerStream
-  ctx       context.Context
-  responses []*{{$tool.ResponseType}}
-}
-
-func (c *{{$serviceName}}_{{$methodName}}ServerCollector) Send(resp *{{$tool.ResponseType}}) error {
-  c.responses = append(c.responses, resp)
-  return nil
-}
-
-func (c *{{$serviceName}}_{{$methodName}}ServerCollector) Context() context.Context {
-  return c.ctx
-}
-{{- end }}
-{{- end }}
-{{ end }}
-
 {{- range $key, $val := .Services }}
 // Register{{$key}}Handler registers standard MCP handlers for {{$key}}
 func Register{{$key}}Handler(s *mcpserver.MCPServer, srv {{$key}}Server, opts ...runtime.Option) {
