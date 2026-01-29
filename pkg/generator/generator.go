@@ -68,7 +68,6 @@ import (
   mcpserver "github.com/mark3labs/mcp-go/server"
   "encoding/json"
   "google.golang.org/protobuf/encoding/protojson"
-  "connectrpc.com/connect"
   grpc "google.golang.org/grpc"
   "github.com/redpanda-data/protoc-gen-go-mcp/pkg/runtime"
 )
@@ -238,118 +237,6 @@ func Register{{$key}}HandlerWithProvider(s *mcpserver.MCPServer, srv {{$key}}Ser
   default:
     Register{{$key}}Handler(s, srv, opts...)
   }
-}
-{{- end }}
-
-{{- range $serviceName, $methods := .Services }}
-// {{$serviceName}}Client is compatible with the grpc-go client interface.
-type {{$serviceName}}Client interface {
-  {{- range $methodName, $tool := $methods }}
-  {{- if eq $tool.StreamType 1 }}
-  {{$methodName}}(ctx context.Context, req *{{$tool.RequestType}}, opts ...grpc.CallOption) ({{$serviceName}}_{{$methodName}}Client, error)
-  {{- else }}
-  {{$methodName}}(ctx context.Context, req *{{$tool.RequestType}}, opts ...grpc.CallOption) (*{{$tool.ResponseType}}, error)
-  {{- end }}
-  {{- end }}
-}
-
-{{- range $methodName, $tool := $methods }}
-{{- if eq $tool.StreamType 1 }}
-// {{$serviceName}}_{{$methodName}}Client is the client streaming interface for {{$methodName}}.
-type {{$serviceName}}_{{$methodName}}Client interface {
-  Recv() (*{{$tool.ResponseType}}, error)
-  grpc.ClientStream
-}
-{{- end }}
-{{- end }}
-{{ end }}
-
-
-{{- range $serviceName, $methods := .Services }}
-// Connect{{$serviceName}}Client is compatible with the connectrpc-go client interface.
-type Connect{{$serviceName}}Client interface {
-  {{- range $methodName, $tool := $methods }}
-  {{- if eq $tool.StreamType 1 }}
-  {{$methodName}}(ctx context.Context, req *connect.Request[{{$tool.RequestType}}]) (*connect.ServerStreamForClient[{{$tool.ResponseType}}], error)
-  {{- else }}
-  {{$methodName}}(ctx context.Context, req *connect.Request[{{$tool.RequestType}}]) (*connect.Response[{{$tool.ResponseType}}], error)
-  {{- end }}
-  {{- end }}
-}
-{{ end }}
-
-{{- range $key, $val := .Services }}
-// ForwardToConnect{{$key}}Client registers a connectrpc client, to forward MCP calls to it.
-func ForwardToConnect{{$key}}Client(s *mcpserver.MCPServer, client Connect{{$key}}Client, opts ...runtime.Option) {
-  config := runtime.NewConfig()
-  for _, opt := range opts {
-    opt(config)
-  }
-
-  {{- range $tool_name, $tool_val := $val }}
-  {{$tool_name}}Tool := {{$key}}_{{$tool_name}}Tool
-  // Add extra properties to schema if configured
-  if len(config.ExtraProperties) > 0 {
-    {{$tool_name}}Tool = runtime.AddExtraPropertiesToTool({{$tool_name}}Tool, config.ExtraProperties)
-  }
-
-  s.AddTool({{$tool_name}}Tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    var req {{$tool_val.RequestType}}
-
-    message := request.GetArguments()
-
-    // Extract extra properties if configured
-    for _, prop := range config.ExtraProperties {
-      if propVal, ok := message[prop.Name]; ok {
-        ctx = context.WithValue(ctx, prop.ContextKey, propVal)
-      }
-    }
-
-    marshaled, err := json.Marshal(message)
-    if err != nil {
-      return nil, err
-    }
-
-    if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(marshaled, &req); err != nil {
-      return nil, err
-    }
-
-    {{- if eq $tool_val.StreamType 1 }}
-    // Server streaming: collect all responses into an array
-    stream, err := client.{{$tool_name}}(ctx, connect.NewRequest(&req))
-    if err != nil {
-      return runtime.HandleError(err)
-    }
-
-    var results []json.RawMessage
-    for stream.Receive() {
-      m, err := (protojson.MarshalOptions{UseProtoNames: true, EmitDefaultValues: true}).Marshal(stream.Msg())
-      if err != nil {
-        return nil, err
-      }
-      results = append(results, m)
-    }
-    if err := stream.Err(); err != nil {
-      return runtime.HandleError(err)
-    }
-    marshaled, err = json.Marshal(results)
-    if err != nil {
-      return nil, err
-    }
-    {{- else }}
-    resp, err := client.{{$tool_name}}(ctx, connect.NewRequest(&req))
-    if err != nil {
-      return runtime.HandleError(err)
-    }
-
-    marshaled, err = (protojson.MarshalOptions{UseProtoNames: true, EmitDefaultValues: true}).Marshal(resp.Msg)
-    if err != nil {
-      return nil, err
-    }
-    {{- end }}
-    return mcp.NewToolResultText(string(marshaled)), nil
-  })
-  {{- end }}
 }
 {{- end }}
 
