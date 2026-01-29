@@ -19,12 +19,13 @@
 package testdataconnect
 
 import (
-	connect "connectrpc.com/connect"
 	context "context"
 	errors "errors"
-	testdata "github.com/redpanda-data/protoc-gen-go-mcp/pkg/testdata/gen/go/testdata"
 	http "net/http"
 	strings "strings"
+
+	connect "connectrpc.com/connect"
+	testdata "github.com/cedbossneo/protoc-gen-go-mcp/pkg/testdata/gen/go/testdata"
 )
 
 // This is a compile-time assertion to ensure that this generated file and the connect package are

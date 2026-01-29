@@ -21,6 +21,10 @@
 package testdata
 
 import (
+	reflect "reflect"
+	sync "sync"
+	unsafe "unsafe"
+
 	_ "buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
@@ -28,9 +32,6 @@ import (
 	anypb "google.golang.org/protobuf/types/known/anypb"
 	structpb "google.golang.org/protobuf/types/known/structpb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
-	reflect "reflect"
-	sync "sync"
-	unsafe "unsafe"
 )
 
 const (
@@ -828,7 +829,7 @@ const file_testdata_test_service_proto_rawDesc = "" +
 	"\aGetItem\x12\x18.testdata.GetItemRequest\x1a\x19.testdata.GetItemResponse\x12h\n" +
 	"\x15ProcessWellKnownTypes\x12&.testdata.ProcessWellKnownTypesRequest\x1a'.testdata.ProcessWellKnownTypesResponse\x12S\n" +
 	"\x0eTestValidation\x12\x1f.testdata.TestValidationRequest\x1a .testdata.TestValidationResponseB\xa9\x01\n" +
-	"\fcom.testdataB\x10TestServiceProtoP\x01ZGgithub.com/redpanda-data/protoc-gen-go-mcp/pkg/testdata/gen/go/testdata\xa2\x02\x03TXX\xaa\x02\bTestdata\xca\x02\bTestdata\xe2\x02\x14Testdata\\GPBMetadata\xea\x02\bTestdatab\x06proto3"
+	"\fcom.testdataB\x10TestServiceProtoP\x01ZGgithub.com/cedbossneo/protoc-gen-go-mcp/pkg/testdata/gen/go/testdata\xa2\x02\x03TXX\xaa\x02\bTestdata\xca\x02\bTestdata\xe2\x02\x14Testdata\\GPBMetadata\xea\x02\bTestdatab\x06proto3"
 
 var (
 	file_testdata_test_service_proto_rawDescOnce sync.Once

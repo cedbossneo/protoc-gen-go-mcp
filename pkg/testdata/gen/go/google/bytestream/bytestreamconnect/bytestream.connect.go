@@ -19,12 +19,13 @@
 package bytestreamconnect
 
 import (
-	connect "connectrpc.com/connect"
 	context "context"
 	errors "errors"
-	bytestream "google.golang.org/genproto/googleapis/bytestream"
 	http "net/http"
 	strings "strings"
+
+	"connectrpc.com/connect"
+	bytestream "google.golang.org/genproto/googleapis/bytestream"
 )
 
 // This is a compile-time assertion to ensure that this generated file and the connect package are

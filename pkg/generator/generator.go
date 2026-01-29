@@ -27,6 +27,8 @@ import (
 	"strings"
 	"text/template"
 
+	"golang.org/x/tools/imports"
+
 	"buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
 	"github.com/mark3labs/mcp-go/mcp"
 	"google.golang.org/genproto/googleapis/api/annotations"
@@ -64,12 +66,14 @@ import (
   {{- if .HasServerStreaming }}
   "io"
   {{- end }}
+  "encoding/json"
   "github.com/mark3labs/mcp-go/mcp"
   mcpserver "github.com/mark3labs/mcp-go/server"
-  "encoding/json"
   "google.golang.org/protobuf/encoding/protojson"
-  grpc "google.golang.org/grpc"
   "github.com/redpanda-data/protoc-gen-go-mcp/pkg/runtime"
+  {{- range $alias, $path := .ProtoImports }}
+  {{ $alias }} "{{ $path }}"
+  {{- end }}
 )
 
 
@@ -330,6 +334,7 @@ type TplParams struct {
 	ToolsOpenAI        map[string]mcp.Tool
 	Services           map[string]map[string]Tool
 	HasServerStreaming bool // True if any method uses server streaming (needed for io import)
+	ProtoImports       map[string]string // Map of alias -> import path for proto types
 }
 
 type StreamType int
@@ -782,9 +787,8 @@ func (g *FileGenerator) Generate(packageSuffix string) {
 		file.GeneratedFilenamePrefix+GeneratedFilenameExtension,
 		goImportPath,
 	)
-	if packageSuffix != "" {
-		g.gf.Import(file.GoImportPath)
-	}
+	// Note: Don't use g.gf.Import() here as it registers imports that will be
+	// added after imports.Process, causing unused imports in generated code.
 
 	fileTpl := fileTemplate
 	tpl, err := template.New("gen").Parse(fileTpl)
@@ -797,6 +801,21 @@ func (g *FileGenerator) Generate(packageSuffix string) {
 	tools := map[string]mcp.Tool{}
 	toolsOpenAI := map[string]mcp.Tool{}
 	hasServerStreaming := false
+	protoImports := map[string]string{} // alias -> import path
+
+	// Helper to get qualified type name without using QualifiedGoIdent
+	// which would register imports in protogen
+	qualifyType := func(ident protogen.GoIdent) string {
+		// If the type is in the same package as the generated file, use unqualified name
+		if packageSuffix == "" && ident.GoImportPath == file.GoImportPath {
+			return ident.GoName
+		}
+		// Generate alias from last part of import path
+		parts := strings.Split(string(ident.GoImportPath), "/")
+		alias := parts[len(parts)-1]
+		protoImports[alias] = string(ident.GoImportPath)
+		return alias + "." + ident.GoName
+	}
 
 	for _, svc := range g.f.Services {
 		s := map[string]Tool{}
@@ -850,8 +869,8 @@ func (g *FileGenerator) Generate(packageSuffix string) {
 			toolOpenAI.RawInputSchema = json.RawMessage(marshaledOpenAI)
 
 			s[meth.GoName] = Tool{
-				RequestType:   g.gf.QualifiedGoIdent(meth.Input.GoIdent),
-				ResponseType:  g.gf.QualifiedGoIdent(meth.Output.GoIdent),
+				RequestType:   qualifyType(meth.Input.GoIdent),
+				ResponseType:  qualifyType(meth.Output.GoIdent),
 				MCPTool:       toolStandard,
 				MCPToolOpenAI: toolOpenAI,
 				StreamType:    streamType,
@@ -875,16 +894,36 @@ func (g *FileGenerator) Generate(packageSuffix string) {
 		Tools:              tools,
 		ToolsOpenAI:        toolsOpenAI,
 		HasServerStreaming: hasServerStreaming,
+		ProtoImports:       protoImports,
 	}
 	var buf bytes.Buffer
 	err = tpl.Execute(&buf, params)
 	if err != nil {
 		g.gen.Error(err)
+		return // ou selon votre gestion d'erreur
 	}
-	p, err := format.Source(buf.Bytes())
+
+	// Options couramment utilisées pour les générateurs de code
+	opts := &imports.Options{
+		Comments:  true,  // conserve les commentaires
+		TabIndent: true,  // utilise des tabulations pour l'indentation
+		TabWidth:  8,     // largeur de tabulation standard
+		Fragment:  false, // false si c'est un fichier Go complet (package + déclarations)
+		// AllErrors: true, // décommentez si vous voulez voir toutes les erreurs d'import
+	}
+
+	p, err := imports.Process("", buf.Bytes(), opts)
 	if err != nil {
+		// En cas d'erreur (ex: imports manquants non résolvables), on peut fallback sur format.Source
 		g.gen.Error(err)
-		return
+		// Optionnel : fallback pour ne pas bloquer la génération
+		fallback, fallbackErr := format.Source(buf.Bytes())
+		if fallbackErr != nil {
+			g.gen.Error(fallbackErr)
+			return
+		}
+		p = fallback
 	}
+
 	g.gf.Write(p)
 }
